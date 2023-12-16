@@ -61,8 +61,9 @@ class ComponentRegistry(ABC, Generic[component_type]):
         return self.get_registry()
 
     def get_list(self, force_reload: bool = False, freshness: Optional[timedelta] = None) -> List[component_type]:
-        registry = self.get_registry(force_reload, freshness)
+        registry = self.get_registry(force_reload, freshness, True)
         keys = sorted(registry.keys())
+        print("ComponentRegistry get_list:", keys)
         return [registry[k] for k in keys]
 
     @property

@@ -91,6 +91,7 @@ class Planner(Role):
         self.round_compressor = round_compressor
         self.compression_template = read_yaml(self.config.compression_prompt_path)["content"]
 
+        print("plugin_description:", self.plugin_description)
         self.logger.info("Planner initialized successfully")
 
     def compose_conversation_for_prompt(

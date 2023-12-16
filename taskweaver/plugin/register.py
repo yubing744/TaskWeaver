@@ -18,6 +18,8 @@ def register_plugin(func: Union[Callable[..., Any], Type[Plugin]]):
     """
     global register_plugin_inner
 
+    print("register_plugin", func)
+
     if "register_plugin_inner" not in globals() or register_plugin_inner is None:
         print("no registry for loading plugin")
     elif isinstance(func, type) and issubclass(func, Plugin):

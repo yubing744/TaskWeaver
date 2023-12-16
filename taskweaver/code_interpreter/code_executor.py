@@ -62,6 +62,8 @@ class CodeExecutor:
         self.plugin_loaded: bool = False
         self.config = config
 
+        print("CodeExecutor initialized successfully.")
+
     def execute_code(self, exec_id: str, code: str) -> ExecutionResult:
         if not self.client_started:
             self.start()
@@ -111,6 +113,8 @@ class CodeExecutor:
                 f.write(content)
 
     def load_plugin(self):
+        print("CodeExecutor load_plugin, plugin list:", self.plugin_registry.get_list())
+
         for p in self.plugin_registry.get_list():
             try:
                 src_file = f"{self.config.app_base_path}/plugins/{p.impl}.py"

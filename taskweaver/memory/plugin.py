@@ -166,6 +166,8 @@ class PluginRegistry(ComponentRegistry[PluginEntry]):
         super().__init__(file_glob, ttl)
 
     def _load_component(self, path: str) -> Tuple[str, PluginEntry]:
+        print("_load_component:", path)
+
         entry: Optional[PluginEntry] = PluginEntry.from_yaml_file(path)
         if entry is None:
             raise Exception(f"failed to loading plugin from {path}")
@@ -196,6 +198,8 @@ class PluginModule(Module):
         import os
 
         file_glob = os.path.join(config.base_path, "*.yaml")
+
+        print("PluginModule load files:", file_glob)
         return PluginRegistry(
             file_glob=file_glob,
             ttl=timedelta(minutes=10),
