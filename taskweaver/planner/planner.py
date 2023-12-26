@@ -1,3 +1,4 @@
+import json
 import os
 from json import JSONDecodeError
 from typing import List, Optional
@@ -9,6 +10,7 @@ from taskweaver.llm import LLMApi
 from taskweaver.llm.util import ChatMessageType, format_chat_message
 from taskweaver.logging import TelemetryLogger
 from taskweaver.memory import Attachment, Conversation, Memory, Post, Round, RoundCompressor
+from taskweaver.memory.attachment import AttachmentType
 from taskweaver.memory.plugin import PluginRegistry
 from taskweaver.misc.example import load_examples
 from taskweaver.role import PostTranslator, Role
@@ -43,6 +45,16 @@ class PlannerConfig(ModuleConfig):
             ),
         )
 
+        self.skip_planning = self._get_bool("skip_planning", False)
+        with open(
+            os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "dummy_plan.json",
+            ),
+            "r",
+        ) as f:
+            self.dummy_plan = json.load(f)
+
 
 class Planner(Role):
     conversation_delimiter_message: str = "Let's start the new conversation!"
@@ -56,11 +68,15 @@ class Planner(Role):
         llm_api: LLMApi,
         plugin_registry: PluginRegistry,
         round_compressor: Optional[RoundCompressor] = None,
+        plugin_only: bool = False,
     ):
         self.config = config
         self.logger = logger
         self.llm_api = llm_api
-        self.plugin_registry = plugin_registry
+        if plugin_only:
+            self.available_plugins = [p for p in plugin_registry.get_list() if p.plugin_only is True]
+        else:
+            self.available_plugins = plugin_registry.get_list()
 
         self.planner_post_translator = PostTranslator(logger)
 
@@ -68,12 +84,12 @@ class Planner(Role):
 
         if self.config.use_example:
             self.examples = self.get_examples()
-        if len(self.plugin_registry.get_list()) == 0:
+        if len(self.available_plugins) == 0:
             self.logger.warning("No plugin is loaded for Planner.")
             self.plugin_description = "No plugin functions loaded."
         else:
             self.plugin_description = "\t" + "\n\t".join(
-                [f"- {plugin.name}: " + f"{plugin.spec.description}" for plugin in self.plugin_registry.get_list()],
+                [f"- {plugin.name}: " + f"{plugin.spec.description}" for plugin in self.available_plugins],
             )
         self.instruction_template = self.prompt_data["instruction_template"]
         self.code_interpreter_introduction = self.prompt_data["code_interpreter_introduction"].format(
@@ -129,7 +145,7 @@ class Planner(Role):
                         conversation.append(
                             format_chat_message(
                                 role="assistant",
-                                message=post.get_attachment(type="invalid_response")[0],
+                                message=post.get_attachment(type=AttachmentType.invalid_response)[0],
                             ),
                         )  # append the invalid response to chat history
                         conversation.append(
@@ -191,11 +207,17 @@ class Planner(Role):
             assert post.send_to is not None, "send_to field is None"
             assert post.send_to != "Planner", "send_to field should not be Planner"
             assert post.message is not None, "message field is None"
-            assert post.attachment_list[0].type == "init_plan", "attachment type is not init_plan"
-            assert post.attachment_list[1].type == "plan", "attachment type is not plan"
-            assert post.attachment_list[2].type == "current_plan_step", "attachment type is not current_plan_step"
+            assert post.attachment_list[0].type == AttachmentType.init_plan, "attachment type is not init_plan"
+            assert post.attachment_list[1].type == AttachmentType.plan, "attachment type is not plan"
+            assert (
+                post.attachment_list[2].type == AttachmentType.current_plan_step
+            ), "attachment type is not current_plan_step"
 
-        llm_output = self.llm_api.chat_completion(chat_history, use_backup_engine=use_back_up_engine)["content"]
+        if self.config.skip_planning and rounds[-1].post_list[-1].send_from == "User":
+            self.config.dummy_plan["response"][0]["content"] += rounds[-1].post_list[-1].message
+            llm_output = json.dumps(self.config.dummy_plan)
+        else:
+            llm_output = self.llm_api.chat_completion(chat_history, use_backup_engine=use_back_up_engine)["content"]
         try:
             response_post = self.planner_post_translator.raw_text_to_post(
                 llm_output=llm_output,
@@ -214,7 +236,7 @@ class Planner(Role):
                 "Please try to regenerate the output.",
                 send_to="Planner",
                 send_from="Planner",
-                attachment_list=[Attachment.create(type="invalid_response", content=llm_output)],
+                attachment_list=[Attachment.create(type=AttachmentType.invalid_response, content=llm_output)],
             )
             self.ask_self_cnt += 1
             if self.ask_self_cnt > self.max_self_ask_num:  # if ask self too many times, return error message

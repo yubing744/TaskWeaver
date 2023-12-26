@@ -17,7 +17,7 @@ class LLMModuleConfig(ModuleConfig):
         )
         self.embedding_api_type = self._get_str(
             "embedding_api_type",
-            self.api_type,
+            "sentence_transformer",
         )
         self.api_base: Optional[str] = self._get_str("api_base", None, required=False)
         self.api_key: Optional[str] = self._get_str(
@@ -43,6 +43,8 @@ class LLMModuleConfig(ModuleConfig):
             options=["json_object", "text"],
             default="json_object",
         )
+
+        self.use_mock: bool = self._get_bool("use_mock", False)
 
 
 class LLMServiceConfig(ModuleConfig):
