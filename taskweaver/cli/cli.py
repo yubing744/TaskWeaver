@@ -5,13 +5,13 @@ from .chat import chat
 from .init import init
 from .util import CliContext, get_ascii_banner
 from .web import web
-
+from .test import plugin_test
 
 @click.group(
     name="taskweaver",
     help=f"\b\n{get_ascii_banner()}\nTaskWeaver",
     invoke_without_command=True,
-    commands=[init, chat, web],
+    commands=[init, chat, web, plugin_test],
 )
 @click.pass_context
 @click.version_option(package_name="taskweaver")
