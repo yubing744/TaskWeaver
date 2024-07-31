@@ -1,12 +1,8 @@
 import ast
-import builtins
 import re
-from _ast import Name
 from typing import List, Optional, Tuple
 
 from injector import inject
-
-allowed_builtins = [name for name, obj in vars(builtins).items() if callable(obj)]
 
 
 class FunctionCallValidator(ast.NodeVisitor):
@@ -14,117 +10,124 @@ class FunctionCallValidator(ast.NodeVisitor):
     def __init__(
         self,
         lines: List[str],
-        plugin_list: List[str],
-        plugin_only: bool,
-        allowed_modules: List[str],
+        allowed_modules: Optional[List[str]] = None,
+        blocked_modules: Optional[List[str]] = None,
+        allowed_functions: Optional[List[str]] = None,
+        blocked_functions: Optional[List[str]] = None,
+        allowed_variables: Optional[List[str]] = None,
     ):
         self.lines = lines
-        self.plugin_list = plugin_list
         self.errors = []
-        self.plugin_return_values = []
-        self.plugin_only = plugin_only
         self.allowed_modules = allowed_modules
+        self.blocked_modules = blocked_modules
+        assert (
+            allowed_modules is None or blocked_modules is None
+        ), "Only one of allowed_modules or blocked_modules can be set."
+        self.blocked_functions = blocked_functions
+        self.allowed_functions = allowed_functions
+        assert (
+            allowed_functions is None or blocked_functions is None
+        ), "Only one of allowed_functions or blocked_functions can be set."
+        self.allowed_variables = allowed_variables
+
+    def _is_allowed_function_call(self, func_name: str) -> bool:
+        if self.allowed_functions is not None:
+            if len(self.allowed_functions) > 0:
+                return func_name in self.allowed_functions
+            return False
+        if self.blocked_functions is not None:
+            if len(self.blocked_functions) > 0:
+                return func_name not in self.blocked_functions
+            return True
+        return True
 
     def visit_Call(self, node):
-        if self.plugin_only:
-            if isinstance(node.func, ast.Name):
-                function_name = node.func.id
-                if function_name not in self.plugin_list and function_name not in allowed_builtins:
-                    self.errors.append(
-                        f"Error on line {node.lineno}: {self.lines[node.lineno-1]} "
-                        f"=> Function '{node.func.id}' is not allowed.",
-                    )
-                    return False
-                return True
-            elif isinstance(node.func, ast.Attribute):
-                function_name = node.func.attr
-                if function_name not in allowed_builtins and function_name not in self.plugin_list:
-                    self.errors.append(
-                        f"Error on line {node.lineno}: {self.lines[node.lineno-1]} "
-                        f"=> Function '{function_name}' is not allowed.",
-                    )
-                    return False
-                return True
-            else:
-                self.errors.append(
-                    f"Error on line {node.lineno}: {self.lines[node.lineno-1]} " f"=> Function call is not allowed.",
-                )
-                return False
+        if self.allowed_functions is None and self.blocked_functions is None:
+            return
 
-    def visit_Import(self, node):
-        if len(self.allowed_modules) > 0:
-            for alias in node.names:
-                if "." in alias.name:
-                    module_name = alias.name.split(".")[0]
-                else:
-                    module_name = alias.name
-                if len(self.allowed_modules) > 0 and module_name not in self.allowed_modules:
-                    self.errors.append(
-                        f"Error on line {node.lineno}: {self.lines[node.lineno-1]} "
-                        f"=> Importing module '{module_name}' is not allowed. ",
-                    )
+        if isinstance(node.func, ast.Name):
+            function_name = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            function_name = node.func.attr
+        else:
+            raise ValueError(f"Unsupported function call: {node.func}")
 
-    def visit_ImportFrom(self, node):
-        if len(self.allowed_modules) > 0:
-            if "." in node.module:
-                module_name = node.module.split(".")[0]
-            else:
-                module_name = node.module
-            if len(self.allowed_modules) > 0 and module_name not in self.allowed_modules:
-                self.errors.append(
-                    f"Error on line {node.lineno}: {self.lines[node.lineno-1]} "
-                    f"=>  Importing from module '{node.module}' is not allowed.",
-                )
-
-    def visit_FunctionDef(self, node):
-        if self.plugin_only:
+        if not self._is_allowed_function_call(function_name):
             self.errors.append(
-                f"Error on line {node.lineno}: {self.lines[node.lineno-1]} => Defining new functions is not allowed.",
+                f"Error on line {node.lineno}: {self.lines[node.lineno - 1]} "
+                f"=> Function '{function_name}' is not allowed.",
             )
 
-    def visit_Assign(self, node):
-        if self.plugin_only:
-            if isinstance(node.value, ast.Call):
-                is_allowed_call = self.visit_Call(node.value)
-                if not is_allowed_call:
-                    return
-                if isinstance(node.targets[0], ast.Tuple):
-                    for elt in node.targets[0].elts:
-                        if isinstance(elt, ast.Name):
-                            self.plugin_return_values.append(elt.id)
-                elif isinstance(node.targets[0], ast.Name):
-                    self.plugin_return_values.append(node.targets[0].id)
-                # print(self.plugin_return_values)
-            else:
-                self.errors.append(f"Error: Unsupported assignment on line {node.lineno}.")
-                self.generic_visit(node)
+    def _is_allowed_module_import(self, mod_name: str) -> bool:
+        if self.allowed_modules is not None:
+            if len(self.allowed_modules) > 0:
+                return mod_name in self.allowed_modules
+            return False
+        if self.blocked_modules is not None:
+            if len(self.blocked_modules) > 0:
+                return mod_name not in self.blocked_modules
+            return True
+        return True
 
-    def visit_Name(self, node: Name):
-        if self.plugin_only:
-            if node.id not in self.plugin_return_values:
+    def visit_Import(self, node):
+        if self.allowed_modules is None and self.blocked_modules is None:
+            return
+
+        for alias in node.names:
+            if "." in alias.name:
+                module_name = alias.name.split(".")[0]
+            else:
+                module_name = alias.name
+
+            if not self._is_allowed_module_import(module_name):
                 self.errors.append(
-                    f"Error on line {node.lineno}: {self.lines[node.lineno-1]} => "
-                    "Only return values of plugins calls can be used.",
+                    f"Error on line {node.lineno}: {self.lines[node.lineno - 1]} "
+                    f"=> Importing module '{module_name}' is not allowed. ",
                 )
-            # self.generic_visit(node)
+
+    def visit_ImportFrom(self, node):
+        if self.allowed_modules is None and self.blocked_modules is None:
+            return
+
+        if "." in node.module:
+            module_name = node.module.split(".")[0]
+        else:
+            module_name = node.module
+
+        if not self._is_allowed_module_import(module_name):
+            self.errors.append(
+                f"Error on line {node.lineno}: {self.lines[node.lineno - 1]} "
+                f"=>  Importing from module '{node.module}' is not allowed.",
+            )
+
+    def _is_allowed_variable(self, var_name: str) -> bool:
+        if self.allowed_variables is not None:
+            if len(self.allowed_variables) > 0:
+                return var_name in self.allowed_variables
+            return False
+        return True
+
+    def visit_Assign(self, node: ast.Assign):
+        if self.allowed_variables is None:
+            return
+
+        for target in node.targets:
+            variable_names = []
+            if isinstance(target, ast.Name):
+                variable_names.append(target.id)
+            else:
+                for name in ast.walk(target):
+                    if isinstance(name, ast.Name):
+                        variable_names.append(name.id)
+            for variable_name in variable_names:
+                if not self._is_allowed_variable(variable_name):
+                    self.errors.append(
+                        f"Error on line {node.lineno}: {self.lines[node.lineno - 1]} "
+                        f"=> Assigning to {variable_name} is not allowed.",
+                    )
 
     def generic_visit(self, node):
-        if self.plugin_only and not isinstance(
-            node,
-            (ast.Call, ast.Assign, ast.Import, ast.ImportFrom, ast.Expr, ast.Module, ast.Name),
-        ):
-            if isinstance(node, ast.Tuple):
-                for elt in node.elts:
-                    self.visit(elt)
-            else:
-                error_message = (
-                    f"Error on line {node.lineno}: {self.lines[node.lineno-1]} => "
-                    "Codes except plugin calls are not allowed."
-                )
-                self.errors.append(error_message)
-
-        else:
-            super().generic_visit(node)
+        super().generic_visit(node)
 
 
 def format_code_correction_message() -> str:
@@ -174,10 +177,12 @@ def separate_magics_and_code(input_code: str) -> Tuple[List[str], str, List[str]
 
 def code_snippet_verification(
     code_snippet: str,
-    plugin_list: List[str],
     code_verification_on: bool = False,
-    plugin_only: bool = False,
-    allowed_modules: List[str] = [],
+    allowed_modules: Optional[List[str]] = None,
+    blocked_modules: Optional[List[str]] = None,
+    allowed_functions: Optional[List[str]] = None,
+    blocked_functions: Optional[List[str]] = None,
+    allowed_variables: Optional[List[str]] = None,
 ) -> Optional[List[str]]:
     if not code_verification_on:
         return None
@@ -193,10 +198,16 @@ def code_snippet_verification(
             if not line.strip() or line.strip().startswith("#"):
                 continue
             processed_lines.append(line)
-        validator = FunctionCallValidator(processed_lines, plugin_list, plugin_only, allowed_modules)
+        validator = FunctionCallValidator(
+            lines=processed_lines,
+            allowed_modules=allowed_modules,
+            blocked_modules=blocked_modules,
+            allowed_functions=allowed_functions,
+            blocked_functions=blocked_functions,
+            allowed_variables=allowed_variables,
+        )
         validator.visit(tree)
         errors.extend(validator.errors)
         return errors
     except SyntaxError as e:
-        # print(f"Syntax error: {e}")
         return [f"Syntax error: {e}"]

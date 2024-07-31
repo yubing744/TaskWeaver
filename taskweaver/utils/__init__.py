@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import dataclasses
+import glob
+import importlib
+import inspect
 import json
 import os
 import secrets
+import sys
 from datetime import datetime
-from typing import Any, Dict
+from hashlib import md5
+from typing import Any, Dict, List, Union
 
 
 def create_id(length: int = 4) -> str:
@@ -22,6 +27,16 @@ def read_yaml(path: str) -> Dict[str, Any]:
             return yaml.safe_load(file)
     except Exception as e:
         raise ValueError(f"Yaml loading failed due to: {e}")
+
+
+def write_yaml(path: str, content: Dict[str, Any]):
+    import yaml
+
+    try:
+        with open(path, "w") as file:
+            yaml.safe_dump(content, file, sort_keys=False)
+    except Exception as e:
+        raise ValueError(f"Yaml writing failed due to: {e}")
 
 
 def validate_yaml(content: Any, schema: str) -> bool:
@@ -58,3 +73,18 @@ def json_dumps(obj: Any) -> str:
 
 def json_dump(obj: Any, fp: Any):
     json.dump(obj, fp, cls=EnhancedJSONEncoder)
+
+
+def generate_md5_hash(content: str) -> str:
+    return md5(content.encode()).hexdigest()
+
+
+def glob_files(path: Union[str, List[str]]) -> list[str]:
+    if isinstance(path, str):
+        return glob.glob(path)
+    else:
+        return [item for sublist in [glob.glob(p) for p in path] for item in sublist]
+
+
+def import_module(module_name: str):
+    return importlib.import_module(module_name)

@@ -1,11 +1,12 @@
+import copy
 import json
 import os
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, NamedTuple, Optional
 
-AppConfigSourceType = Literal["env", "json", "app", "default"]
-AppConfigValueType = Literal["str", "int", "float", "bool", "list", "enum", "path"]
+AppConfigSourceType = Literal["override", "env", "json", "app", "default"]
+AppConfigValueType = Literal["str", "int", "float", "bool", "list", "enum", "path", "dict"]
 
 
 class AppConfigSourceValue(NamedTuple):
@@ -49,6 +50,7 @@ class AppConfigSource:
         self.config: Dict[str, AppConfigItem] = {}
         self.config_file_path = config_file_path
         self.in_memory_store = config
+        self.override_store: Dict[str, Any] = {}
         if config_file_path is not None:
             self.json_file_store = self._load_config_from_json(config_file_path)
         else:
@@ -64,6 +66,7 @@ class AppConfigSource:
                 self.json_file_store = json.load(f)
                 return self.json_file_store
         except Exception as e:
+            print("Failed to load config file", config_file_path)
             raise e
 
     def _get_config_value(
@@ -74,6 +77,11 @@ class AppConfigSource:
         required: bool = True,
     ) -> Optional[Any]:
         self.set_config_value(var_name, var_type, default_value, "default")
+
+        if var_name in self.override_store:
+            val = self.override_store.get(var_name, None)
+            if val is not None:
+                return val
 
         if self.in_memory_store is not None:
             val = self.in_memory_store.get(var_name, None)
@@ -114,10 +122,13 @@ class AppConfigSource:
                 sources=[AppConfigSourceValue(source=source, value=value)],
             )
         else:
-            self.config[var_name].value = value
             new_sources = [s for s in self.config[var_name].sources if s.source != source]
             new_sources.append(AppConfigSourceValue(source=source, value=value))
+            new_sources.sort(key=lambda s: s.source)
             self.config[var_name].sources = new_sources
+            self.config[var_name].value = value
+        if source == "override":
+            self.override_store[var_name] = value
 
     def get_bool(
         self,
@@ -168,7 +179,7 @@ class AppConfigSource:
 
         return val
 
-    def get_list(self, key: str, default: Optional[List[Any]] = None) -> List[str]:
+    def get_list(self, key: str, default: Optional[List[Any]] = None) -> List[Any]:
         val = self._get_config_value(key, "list", default)
         if isinstance(val, list):
             return val
@@ -271,3 +282,13 @@ class AppConfigSource:
         if path_config.startswith("~"):
             path_config = os.path.expanduser(path_config)
         return path_config
+
+    def get_dict(self, key: str, default: Optional[dict] = None) -> dict:
+        val = self._get_config_value(key, "dict", default)
+        if isinstance(val, dict):
+            return val
+        else:
+            raise ValueError(f"Invalid dict config value {val}")
+
+    def clone(self):
+        return copy.deepcopy(self)

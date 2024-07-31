@@ -23,12 +23,6 @@ class QWenServiceConfig(LLMServiceConfig):
             shared_model if shared_model is not None else "qwen-max-1201",
         )
 
-        shared_backup_model = self.llm_module_config.backup_model
-        self.backup_model = self._get_str(
-            "backup_model",
-            shared_backup_model if shared_backup_model is not None else self.model,
-        )
-
         shared_embedding_model = self.llm_module_config.embedding_model
         self.embedding_model = self._get_str(
             "embedding_model",
@@ -57,7 +51,6 @@ class QWenService(CompletionService, EmbeddingService):
     def chat_completion(
         self,
         messages: List[ChatMessageType],
-        use_backup_engine: bool = False,
         stream: bool = True,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
@@ -83,7 +76,7 @@ class QWenService(CompletionService, EmbeddingService):
 
             else:
                 raise Exception(
-                    f"QWen API call failed with status code {response.status_code} and error message {response.error}",
+                    f"QWen API call failed with status code {msg_chunk.status_code} and error message {msg_chunk.code}",
                 )
 
     def get_embeddings(self, strings: List[str]) -> List[List[float]]:

@@ -21,6 +21,18 @@ MockServiceModeType = Literal[
 ]
 
 
+class LLMMockException(Exception):
+    pass
+
+
+class LLMMockApiException(LLMMockException):
+    pass
+
+
+class LLMMockCacheException(LLMMockException):
+    pass
+
+
 class MockApiServiceConfig(LLMServiceConfig):
     def _configure(self) -> None:
         self._set_name("mock")
@@ -54,11 +66,12 @@ class MockApiServiceConfig(LLMServiceConfig):
             os.path.join(self.src.app_base_path, "cache", "mock.yaml"),
         )
 
+        os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
         # split the chat completion response into chunks and delay each chunk by this amount
         # if negative, return the whole response at once
         self.playback_delay: float = self._get_float(
             "playback_delay",
-            0.05,
+            -1,
         )
 
 
@@ -77,7 +90,11 @@ class MockCacheStore:
         self.embedding_store: Dict[str, MockCacheEntry] = {}
 
         if os.path.exists(self.path):
-            self._init_from_disk()
+            try:
+                self._init_from_disk()
+            except LLMMockCacheException:
+                # ignore cache loading issue
+                pass
 
     def get_completion(self, query: List[ChatMessageType]) -> Optional[ChatMessageType]:
         serialized_query = self._serialize_completion_query(query)
@@ -164,8 +181,7 @@ class MockCacheStore:
         try:
             cache = yaml.safe_load(open(self.path, "r"))
         except Exception as e:
-            print(f"Error loading cache file {self.path}: {e}")
-            return
+            raise LLMMockCacheException(f"Error loading cache file {self.path}: {e}")
 
         try:
             completion_store = cache["completion_store"]
@@ -173,9 +189,9 @@ class MockCacheStore:
                 try:
                     self.completion_store[key] = MockCacheEntry(**value)
                 except Exception as e:
-                    print(f"Error loading cache entry {key}: {e}")
+                    raise LLMMockCacheException(f"Error loading cache entry {key}: {e}")
         except Exception as e:
-            print(f"Error loading completion store: {e}")
+            raise LLMMockCacheException(f"Error loading completion store: {e}")
 
         try:
             embedding_store = cache["embedding_store"]
@@ -183,9 +199,9 @@ class MockCacheStore:
                 try:
                     self.embedding_store[key] = MockCacheEntry(**value)
                 except Exception as e:
-                    print(f"Error loading cache entry {key}: {e}")
+                    raise LLMMockCacheException(f"Error loading cache entry {key}: {e}")
         except Exception as e:
-            print(f"Error loading embedding store: {e}")
+            raise LLMMockCacheException(f"Error loading embedding store: {e}")
 
     def _save_to_disk(self):
         # TODO: postpone immediate update and periodically save to disk
@@ -198,7 +214,7 @@ class MockCacheStore:
                 open(self.path, "w"),
             )
         except Exception as e:
-            print(f"Error saving cache file {self.path}: {e}")
+            raise LLMMockCacheException(f"Error saving cache file {self.path}: {e}")
 
 
 class MockApiService(CompletionService, EmbeddingService):
@@ -224,7 +240,6 @@ class MockApiService(CompletionService, EmbeddingService):
     def chat_completion(
         self,
         messages: List[ChatMessageType],
-        use_backup_engine: bool = False,
         stream: bool = True,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
@@ -240,7 +255,7 @@ class MockApiService(CompletionService, EmbeddingService):
         # playback
         if cached_value is None:
             if self.config.mode == "playback_only":
-                raise Exception("No cached value found")
+                raise LLMMockApiException("No cached value found")
         else:
             if self.config.mode != "record_only":
                 return self._get_from_playback_completion(cached_value)
@@ -248,11 +263,10 @@ class MockApiService(CompletionService, EmbeddingService):
         # record
         def get_from_base() -> Generator[ChatMessageType, None, None]:
             if self.base_completion_service is None:
-                raise Exception("base_completion_service is not set")
+                raise LLMMockApiException("base_completion_service is not set")
             new_value = format_chat_message("assistant", "")
             for chunk in self.base_completion_service.chat_completion(
                 messages,
-                use_backup_engine,
                 stream,
                 temperature,
                 max_tokens,
@@ -278,10 +292,10 @@ class MockApiService(CompletionService, EmbeddingService):
 
         if len(cache_missed_values) > 0:
             if self.config.mode == "playback_only":
-                raise Exception("Not all cached values found")
+                raise LLMMockApiException("Not all cached values found")
 
         if self.base_embedding_service is None:
-            raise Exception("base_embedding_service is not set")
+            raise LLMMockApiException("base_embedding_service is not set")
 
         new_values = self.base_embedding_service.get_embeddings(cache_missed_values)
 
@@ -326,8 +340,8 @@ class MockApiService(CompletionService, EmbeddingService):
         content = cached_value["content"]
         cur_pos = 0
         while cur_pos < len(content):
-            chunk_size = random.randint(3, 20)
+            chunk_size = random.randint(2, 8)
             next_pos = min(cur_pos + chunk_size, len(content))
+            time.sleep(self.config.playback_delay)  # init delay
             yield format_chat_message(role, content[cur_pos:next_pos])
             cur_pos = next_pos
-            time.sleep(self.config.playback_delay)

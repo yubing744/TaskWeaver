@@ -12,19 +12,15 @@ class AttachmentType(Enum):
     init_plan = "init_plan"
     plan = "plan"
     current_plan_step = "current_plan_step"
+    review = "review"
 
     # CodeInterpreter - generate code
     thought = "thought"
-    python = "python"
-
-    # CodeInterpreter - sample code
-    sample = "sample"
+    reply_type = "reply_type"
+    reply_content = "reply_content"
 
     # CodeInterpreter - verification
     verification = "verification"
-
-    # CodeInterpreter - text message
-    text = "text"
 
     # CodeInterpreter - execute code
     code_error = "code_error"
@@ -38,8 +34,16 @@ class AttachmentType(Enum):
     # function calling
     function = "function"
 
+    # WebExplorer
+    web_exploring_plan = "web_exploring_plan"
+    web_exploring_screenshot = "web_exploring_screenshot"
+    web_exploring_link = "web_exploring_link"
+
     # Misc
     invalid_response = "invalid_response"
+
+    # board info
+    board = "board"
 
 
 @dataclass
@@ -68,6 +72,7 @@ class Attachment:
         type: AttachmentType,
         content: str,
         id: Optional[str] = None,
+        extra: Optional[Any] = None,
     ) -> Attachment:
         import builtins
 
@@ -79,6 +84,7 @@ class Attachment:
             type=type,
             content=content,
             id=id,
+            extra=extra,
         )
 
     def __repr__(self) -> str:
@@ -97,9 +103,18 @@ class Attachment:
 
     @staticmethod
     def from_dict(content: AttachmentDict) -> Attachment:
+        # deprecated types
+        if content["type"] in ["python", "sample", "text"]:
+            raise ValueError(
+                f"Deprecated attachment type: {content['type']}. "
+                f"Please check our blog https://microsoft.github.io/TaskWeaver/blog/local_llm "
+                f"on how to fix it.",
+            )
+
         type = AttachmentType(content["type"])
         return Attachment.create(
             type=type,
             content=content["content"],
             id=content["id"] if "id" in content else None,
+            extra=content["extra"] if "extra" in content else None,
         )

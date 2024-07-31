@@ -1,4 +1,5 @@
 import os
+import sys
 from typing import Any, Generator, List, Optional
 
 import openai
@@ -14,21 +15,21 @@ DEFAULT_STOP_TOKEN: List[str] = ["<EOS>"]
 
 class OpenAIServiceConfig(LLMServiceConfig):
     def _configure(self) -> None:
-        self._set_name("openai")
-
         # shared common config
         self.api_type = self.llm_module_config.api_type
         assert self.api_type in ["openai", "azure", "azure_ad"], "Invalid API type"
 
+        self._set_name(self.api_type)
+
         shared_api_base = self.llm_module_config.api_base
         self.api_base = self._get_str(
             "api_base",
-            shared_api_base if shared_api_base is not None else "https://api.openai.com/v1",
+            (shared_api_base if shared_api_base is not None else "https://api.openai.com/v1"),
         )
         shared_api_key = self.llm_module_config.api_key
         self.api_key = self._get_str(
             "api_key",
-            shared_api_key if shared_api_key is not None else ("" if self.api_type == "azure_ad" else None),
+            (shared_api_key if shared_api_key is not None else ("" if self.api_type == "azure_ad" else None)),
         )
 
         shared_model = self.llm_module_config.model
@@ -36,15 +37,11 @@ class OpenAIServiceConfig(LLMServiceConfig):
             "model",
             shared_model if shared_model is not None else "gpt-4",
         )
-        shared_backup_model = self.llm_module_config.backup_model
-        self.backup_model = self._get_str(
-            "backup_model",
-            shared_backup_model if shared_backup_model is not None else self.model,
-        )
+
         shared_embedding_model = self.llm_module_config.embedding_model
         self.embedding_model = self._get_str(
             "embedding_model",
-            shared_embedding_model if shared_embedding_model is not None else "text-embedding-ada-002",
+            (shared_embedding_model if shared_embedding_model is not None else "text-embedding-ada-002"),
         )
 
         self.response_format = self.llm_module_config.response_format
@@ -84,6 +81,12 @@ class OpenAIServiceConfig(LLMServiceConfig):
             "aad_client_secret",
             None if is_app_login else "",
         )
+        self.aad_skip_interactive = self._get_bool(
+            "aad_skip_interactive",
+            # support interactive on macOS and Windows by default, skip on other platforms
+            # could be overridden by config
+            not (sys.platform == "darwin" or sys.platform == "win32"),
+        )
         self.aad_use_token_cache = self._get_bool("aad_use_token_cache", True)
         self.aad_token_cache_path = self._get_str(
             "aad_token_cache_path",
@@ -102,6 +105,11 @@ class OpenAIServiceConfig(LLMServiceConfig):
         self.presence_penalty = self._get_float("presence_penalty", 0)
         self.seed = self._get_int("seed", 123456)
 
+        self.require_alternative_roles = self._get_bool("require_alternative_roles", False)
+        self.support_system_role = self._get_bool("support_system_role", True)
+        self.support_constrained_generation = self._get_bool("support_constrained_generation", False)
+        self.json_schema_enforcer = self._get_str("json_schema_enforcer", None, required=False)
+
 
 class OpenAIService(CompletionService, EmbeddingService):
     @inject
@@ -112,23 +120,31 @@ class OpenAIService(CompletionService, EmbeddingService):
 
         assert api_type in ["openai", "azure", "azure_ad"], "Invalid API type"
 
-        self.client: OpenAI = (
-            OpenAI(
+        if api_type == "openai":
+            client = OpenAI(
                 base_url=self.config.api_base,
                 api_key=self.config.api_key,
             )
-            if api_type == "openai"
-            else AzureOpenAI(
+        elif api_type == "azure":
+            client = AzureOpenAI(
                 api_version=self.config.api_version,
                 azure_endpoint=self.config.api_base,
-                api_key=(self.config.api_key if api_type == "azure" else self._get_aad_token()),
+                api_key=self.config.api_key,
             )
-        )
+        elif api_type == "azure_ad":
+            client = AzureOpenAI(
+                api_version=self.config.api_version,
+                azure_endpoint=self.config.api_base,
+                azure_ad_token_provider=lambda: self._get_aad_token(),
+            )
+        else:
+            raise Exception(f"Invalid API type: {api_type}")
+
+        self.client: OpenAI = client
 
     def chat_completion(
         self,
         messages: List[ChatMessageType],
-        use_backup_engine: bool = False,
         stream: bool = True,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
@@ -137,7 +153,6 @@ class OpenAIService(CompletionService, EmbeddingService):
         **kwargs: Any,
     ) -> Generator[ChatMessageType, None, None]:
         engine = self.config.model
-        backup_engine = self.config.backup_model
 
         temperature = temperature if temperature is not None else self.config.temperature
         max_tokens = max_tokens if max_tokens is not None else self.config.max_tokens
@@ -146,19 +161,45 @@ class OpenAIService(CompletionService, EmbeddingService):
         seed = self.config.seed
 
         try:
-            if use_backup_engine:
-                engine = backup_engine
-
             tools_kwargs = {}
             if "tools" in kwargs and "tool_choice" in kwargs:
                 tools_kwargs["tools"] = kwargs["tools"]
                 tools_kwargs["tool_choice"] = kwargs["tool_choice"]
+
             if "response_format" in kwargs:
                 response_format = kwargs["response_format"]
             elif self.config.response_format == "json_object":
                 response_format = {"type": "json_object"}
             else:
                 response_format = None
+
+            extra_body = {}
+            if self.config.support_constrained_generation:
+                if "json_schema" in kwargs:
+                    extra_body["guided_json"] = kwargs["json_schema"]
+                    assert isinstance(extra_body["guided_json"], dict), "JSON schema must be a dictionary"
+
+                    assert self.config.json_schema_enforcer in [
+                        "outlines",
+                        "lm-format-enforcer",
+                    ], f"Invalid JSON schema enforcer: {self.config.json_schema_enforcer}"
+                    extra_body["guided_decoding_backend"] = self.config.json_schema_enforcer
+
+                else:
+                    raise Exception("Constrained generation requires a JSON schema")
+
+            # Preprocess messages
+            # 1. Change `system` to `user` if `support_system_role` is False
+            # 2. Add dummy `assistant` messages if alternating user/assistant is required
+            for i, message in enumerate(messages):
+                if (not self.config.support_system_role) and message["role"] == "system":
+                    message["role"] = "user"
+                if self.config.require_alternative_roles:
+                    if i > 0 and message["role"] == "user" and messages[i - 1]["role"] == "user":
+                        messages.insert(
+                            i,
+                            {"role": "assistant", "content": "I get it."},
+                        )
 
             res: Any = self.client.chat.completions.create(
                 model=engine,
@@ -172,6 +213,7 @@ class OpenAIService(CompletionService, EmbeddingService):
                 stream=stream,
                 seed=seed,
                 response_format=response_format,
+                extra_body=extra_body,
                 **tools_kwargs,
             )
             if stream:
@@ -193,17 +235,21 @@ class OpenAIService(CompletionService, EmbeddingService):
                 if oai_response is None:
                     raise Exception("OpenAI API returned an empty response")
                 response: ChatMessageType = format_chat_message(
-                    role=oai_response.role if oai_response.role is not None else "assistant",
-                    message=oai_response.content if oai_response.content is not None else "",
+                    role=(oai_response.role if oai_response.role is not None else "assistant"),
+                    message=(oai_response.content if oai_response.content is not None else ""),
                 )
-                if oai_response.tool_calls is not None:
+                if oai_response.tool_calls is not None and len(oai_response.tool_calls) > 0:
+                    import json
+
                     response["role"] = "function"
-                    response["content"] = (
-                        "["
-                        + ",".join(
-                            [t.function.model_dump_json() for t in oai_response.tool_calls],
-                        )
-                        + "]"
+                    response["content"] = json.dumps(
+                        [
+                            {
+                                "name": t.function.name,
+                                "arguments": json.loads(t.function.arguments),
+                            }
+                            for t in oai_response.tool_calls
+                        ],
                     )
                 yield response
 
@@ -323,6 +369,16 @@ class OpenAIService(CompletionService, EmbeddingService):
             result = None
         except Exception:
             pass
+
+        if not self.config.aad_skip_interactive:
+            try:
+                result = app.acquire_token_interactive(scopes=scopes)
+                if result is not None and "access_token" in result:
+                    save_cache()
+                    return result["access_token"]
+                result = None
+            except Exception:
+                pass
 
         flow = app.initiate_device_flow(scopes=scopes)
         print(flow["message"])

@@ -24,11 +24,7 @@ class OllamaServiceConfig(LLMServiceConfig):
             "model",
             shared_model if shared_model is not None else "llama2",
         )
-        shared_backup_model = self.llm_module_config.backup_model
-        self.backup_model = self._get_str(
-            "backup_model",
-            shared_backup_model if shared_backup_model is not None else self.model,
-        )
+
         shared_embedding_model = self.llm_module_config.embedding_model
         self.embedding_model = self._get_str(
             "embedding_model",
@@ -53,7 +49,6 @@ class OllamaService(CompletionService, EmbeddingService):
     def chat_completion(
         self,
         messages: List[ChatMessageType],
-        use_backup_engine: bool = False,
         stream: bool = True,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
@@ -64,7 +59,6 @@ class OllamaService(CompletionService, EmbeddingService):
         try:
             return self._chat_completion(
                 messages=messages,
-                use_backup_engine=use_backup_engine,
                 stream=stream,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -75,7 +69,6 @@ class OllamaService(CompletionService, EmbeddingService):
         except Exception:
             return self._completion(
                 messages=messages,
-                use_backup_engine=use_backup_engine,
                 stream=stream,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -87,7 +80,6 @@ class OllamaService(CompletionService, EmbeddingService):
     def _chat_completion(
         self,
         messages: List[ChatMessageType],
-        use_backup_engine: bool = False,
         stream: bool = True,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
@@ -97,7 +89,7 @@ class OllamaService(CompletionService, EmbeddingService):
     ) -> Generator[ChatMessageType, None, None]:
         api_endpoint = "/api/chat"
         payload = {
-            "model": self.config.model if not use_backup_engine else self.config.backup_model,
+            "model": self.config.model,
             "messages": messages,
             "stream": stream,
         }
@@ -131,7 +123,6 @@ class OllamaService(CompletionService, EmbeddingService):
     def _completion(
         self,
         messages: List[ChatMessageType],
-        use_backup_engine: bool = False,
         stream: bool = True,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
@@ -141,7 +132,7 @@ class OllamaService(CompletionService, EmbeddingService):
     ) -> Generator[ChatMessageType, None, None]:
         api_endpoint = "/api/generate"
         payload = {
-            "model": self.config.model if not use_backup_engine else self.config.backup_model,
+            "model": self.config.model,
             "prompt": "",
             "stream": stream,
         }

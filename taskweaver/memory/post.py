@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from taskweaver.memory.attachment import Attachment, AttachmentType
 from taskweaver.memory.type_vars import RoleName
@@ -15,13 +15,13 @@ class Post:
     A post is the message used to communicate between two roles.
     It should always have a text_message to denote the string message,
     while other data formats should be put in the attachment.
-    The role can be either a User, a Planner, or a CodeInterpreter.
+    The role can be either a User, a Planner, or others.
 
     Args:
         id: the unique id of the post.
         send_from: the role who sends the post.
         send_to: the role who receives the post.
-        text_message: the text message in the post.
+        message: the text message in the post.
         attachment_list: a list of attachments in the post.
 
     """
@@ -34,15 +34,15 @@ class Post:
 
     @staticmethod
     def create(
-        message: Union[str | None],
+        message: Optional[str],
         send_from: RoleName,
-        send_to: RoleName,
+        send_to: RoleName = "Unknown",
         attachment_list: Optional[List[Attachment]] = None,
     ) -> Post:
         """create a post with the given message, send_from, send_to, and attachment_list."""
         return Post(
             id="post-" + create_id(),
-            message=message,
+            message=message is not None and message or "",
             send_from=send_from,
             send_to=send_to,
             attachment_list=attachment_list if attachment_list is not None else [],

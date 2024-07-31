@@ -50,14 +50,14 @@ const config = {
           // Remove this to remove the "edit this page" links.
           // sidebarCollapsed: false,
           editUrl:
-            'https://github.com/microsoft/TaskWeaver/tree/docs/website/',
+            'https://github.com/microsoft/TaskWeaver/tree/main/website',
         },
         blog: {
           showReadingTime: true,
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
           editUrl:
-            'https://github.com/microsoft/TaskWeaver/tree/docs/website/',
+            'https://github.com/microsoft/TaskWeaver/tree/main/website',
         },
         theme: {
           customCss: './src/css/custom.css',
@@ -84,7 +84,11 @@ const config = {
             position: 'left',
             label: 'Docs',
           },
-          // {to: '/blog', label: 'Blog', position: 'left'},
+          {
+            to: '/blog',
+            label: 'Blog',
+            position: 'left'
+          },
           {
             href: 'https://github.com/microsoft/taskweaver/',
             label: 'GitHub',
@@ -113,7 +117,7 @@ const config = {
               // },
               {
                 label: 'Discord',
-                href: 'https://discord.gg/nvFMRbzA',
+                href: 'https://discord.gg/Z56MXmZgMb',
               },
               // {
               //   label: 'Twitter',
@@ -160,7 +164,7 @@ const config = {
             },
             {
               label: "Blog",
-              path: "blogs",
+              path: "blog",
             },
           ],
           hideSearchBarWithNoSearchContext: true,

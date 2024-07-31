@@ -1,4 +1,4 @@
 from typing import Literal
 
-RoleName = Literal["User", "Planner", "CodeInterpreter"]
+RoleName = str
 RoundState = Literal["finished", "failed", "created"]

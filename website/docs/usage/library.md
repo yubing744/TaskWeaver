@@ -11,15 +11,16 @@ app = TaskWeaverApp(app_dir=app_dir)
 session = app.get_session()
 
 user_query = "hello, what can you do?"
-response_round = session.send_message(user_query,
-                                      event_handler=lambda _type, _msg: print(f"{_type}:\n{_msg}"))
+response_round = session.send_message(user_query)
 print(response_round.to_dict())
 ```
-**Note:**
-- `event_handler`: a callback function that is utilized to display the internal planning and execution steps of TaskWeaver.
-  It takes two arguments: the message type (e.g., `plan`) and the message body.
-- `response_round`: the response from TaskWeaver. which is an object of the `Round` class. 
-  An example of the `Round` object is shown below:
+
+Essentially, you need to create a [TaskWeaverApp](../concepts/app.md) object and then get a [session](../concepts/session.md) object from it.
+Each time, you can send a message to TaskWeaver by calling `session.send_message(user_query)`.
+The return value of `session.send_message(user_query)` is a [Round](../concepts/round.md) object, which contains the response from TaskWeaver.
+A round is a conversation round between the user and TaskWeaver, which contains a list of [posts](../concepts/post.md).
+
+An example of the `Round` object is shown below. To better understand the structure, you can refer to the [Concepts](../concepts) section.
 ```json
 {
     "id": "round-20231201-043134-218a2681",
@@ -59,3 +60,9 @@ print(response_round.to_dict())
     ]
 }
 ```
+
+:::tip
+If you need to see the intermediate states of the conversation, you need to implement a `SessionEventHandler` class and pass it 
+  at calling `session.send_message(user_query, event_handler=your_event_handler)`. 
+  Find more information about the event handler in [this section](../concepts/session.md).
+:::

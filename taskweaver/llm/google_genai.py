@@ -20,11 +20,7 @@ class GoogleGenAIServiceConfig(LLMServiceConfig):
             "model",
             shared_model if shared_model is not None else "gemini-pro",
         )
-        shared_backup_model = self.llm_module_config.backup_model
-        self.backup_model = self._get_str(
-            "backup_model",
-            shared_backup_model if shared_backup_model is not None else self.model,
-        )
+
         shared_embedding_model = self.llm_module_config.embedding_model
         self.embedding_model = self._get_str(
             "embedding_model",
@@ -38,7 +34,7 @@ class GoogleGenAIServiceConfig(LLMServiceConfig):
             default=shared_response_format if shared_response_format is not None else "text",
         )
         self.temperature = self._get_float("temperature", 0.9)
-        self.max_output_tokens = self._get_int("max_output_tokens", 1000)
+        self.max_output_tokens = self._get_int("max_output_tokens", 2048)
         self.top_k = self._get_int("top_k", 1)
         self.top_p = self._get_float("top_p", 0)
 
@@ -92,7 +88,6 @@ class GoogleGenAIService(CompletionService, EmbeddingService):
     def chat_completion(
         self,
         messages: List[ChatMessageType],
-        use_backup_engine: bool = False,
         stream: bool = True,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
@@ -100,33 +95,19 @@ class GoogleGenAIService(CompletionService, EmbeddingService):
         stop: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> Generator[ChatMessageType, None, None]:
-        try:
-            return self._chat_completion(
-                messages=messages,
-                use_backup_engine=use_backup_engine,
-                stream=stream,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=top_p,
-                stop=stop,
-                **kwargs,
-            )
-        except Exception:
-            return self._completion(
-                messages=messages,
-                use_backup_engine=use_backup_engine,
-                stream=stream,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=top_p,
-                stop=stop,
-                **kwargs,
-            )
+        return self._chat_completion(
+            messages=messages,
+            stream=stream,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            stop=stop,
+            **kwargs,
+        )
 
     def _chat_completion(
         self,
         messages: List[ChatMessageType],
-        use_backup_engine: bool = False,
         stream: bool = True,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
@@ -134,6 +115,8 @@ class GoogleGenAIService(CompletionService, EmbeddingService):
         stop: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> Generator[ChatMessageType, None, None]:
+        from google.generativeai.types import GenerateContentResponse
+
         genai_messages = []
         prev_role = ""
         for msg in messages:
@@ -159,12 +142,12 @@ class GoogleGenAIService(CompletionService, EmbeddingService):
                 raise Exception(f"Invalid role: {msg['role']}")
 
         if stream is False:
-            response = self.model.generate_content(genai_messages, stream=False)
+            response: GenerateContentResponse = self.model.generate_content(genai_messages, stream=False)
             yield format_chat_message("assistant", response.text)
-
-        response = self.model.generate_content(genai_messages, stream=True)
-        for chunk_obj in response:
-            yield format_chat_message("assistant", chunk_obj.text)
+        else:
+            response: GenerateContentResponse = self.model.generate_content(genai_messages, stream=True)
+            for chunk_obj in response:
+                yield format_chat_message("assistant", chunk_obj.text)
 
     def get_embeddings(self, strings: List[str]) -> List[List[float]]:
         genai = self.import_genai_module()
